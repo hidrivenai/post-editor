@@ -3,6 +3,7 @@
 import logging
 import os
 import tempfile
+import unicodedata
 from pathlib import Path
 
 from rclone_ops import list_files_recursive, download_file, upload_file
@@ -10,17 +11,23 @@ from rclone_ops import list_files_recursive, download_file, upload_file
 log = logging.getLogger(__name__)
 
 
+def _nfc(s: str) -> str:
+    """Normalize Unicode to NFC form (precomposed characters)."""
+    return unicodedata.normalize('NFC', s)
+
+
 def build_vault_index(cfg: dict) -> dict:
     """Build {stem: relative_path} lookup for all .md files in the vault.
 
     Called once per poll cycle so wikilinks can be resolved without
-    repeated rclone calls.
+    repeated rclone calls. Keys are NFC-normalized so wikilink lookups
+    match regardless of Unicode form (GDrive uses NFD, Obsidian uses NFC).
     """
     entries = list_files_recursive(cfg['gdrive_remote'])
     index = {}
     for e in entries:
         if e['path'].endswith('.md'):
-            stem = Path(e['path']).stem
+            stem = _nfc(Path(e['path']).stem)
             index[stem] = e['path']
     return index
 
@@ -53,7 +60,7 @@ def upload_text(cfg: dict, rel_path: str, content: str) -> None:
 
 def resolve_wikilink(vault_index: dict, name: str) -> str | None:
     """Look up a wikilink name in the vault index, return relative path or None."""
-    return vault_index.get(name)
+    return vault_index.get(_nfc(name))
 
 
 def sync_for_claude(cfg: dict, vault_index: dict, needed_dirs: list[str],
