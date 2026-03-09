@@ -29,11 +29,20 @@ def setup_claude_credentials() -> None:
                      "Claude CLI may not be authenticated.")
         return
 
+    # Strip surrounding quotes that Coolify/Docker can add
+    if len(creds_json) >= 2 and creds_json[0] == creds_json[-1] and creds_json[0] in ('"', "'"):
+        creds_json = creds_json[1:-1]
+    # Unescape backslash-escaped quotes (Coolify double-escaping)
+    prev = None
+    while prev != creds_json and '\\' in creds_json:
+        prev = creds_json
+        creds_json = creds_json.replace('\\\\', '\\').replace('\\"', '"')
+
     # Validate it's proper JSON
     try:
         json.loads(creds_json)
     except json.JSONDecodeError:
-        log.error("CLAUDE_CREDENTIALS_JSON is not valid JSON")
+        log.error(f"CLAUDE_CREDENTIALS_JSON is not valid JSON after unescaping: {creds_json[:100]}...")
         return
 
     creds_path.parent.mkdir(parents=True, exist_ok=True)
