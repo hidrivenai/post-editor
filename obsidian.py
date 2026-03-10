@@ -86,6 +86,100 @@ def update_post_card_section(content: str, section_name: str, new_content: str) 
     return '\n'.join(new_lines)
 
 
+def parse_reviews(post_card_content: str) -> list[dict]:
+    """Parse the Reviews section into structured review rounds.
+
+    Expected format:
+        # Reviews
+        ## Round 1
+        Status: Ready
+        - Feedback point one
+        - Feedback point two
+
+        ## Round 2
+        Status: Applied
+        - Old feedback
+
+    Returns list of dicts: [{'name': 'Round 1', 'status': 'Ready', 'feedback': '...'}]
+    """
+    # Extract raw Reviews section content
+    lines = post_card_content.split('\n')
+    in_reviews = False
+    reviews_lines = []
+
+    for line in lines:
+        if re.match(r'^# Reviews\s*$', line):
+            in_reviews = True
+            continue
+        elif in_reviews and re.match(r'^# ', line):
+            break
+        elif in_reviews:
+            reviews_lines.append(line)
+
+    if not reviews_lines:
+        return []
+
+    # Split into rounds by H2 headers
+    rounds = []
+    current_name = None
+    current_lines = []
+
+    for line in reviews_lines:
+        h2_match = re.match(r'^## (.+)$', line)
+        if h2_match:
+            if current_name:
+                rounds.append(_parse_single_review(current_name, current_lines))
+            current_name = h2_match.group(1).strip()
+            current_lines = []
+        elif current_name is not None:
+            current_lines.append(line)
+
+    if current_name:
+        rounds.append(_parse_single_review(current_name, current_lines))
+
+    return rounds
+
+
+def _parse_single_review(name: str, lines: list[str]) -> dict:
+    """Parse a single review round's lines into a dict."""
+    status = ''
+    feedback_lines = []
+
+    for line in lines:
+        status_match = re.match(r'^Status:\s*(.+)$', line, re.IGNORECASE)
+        if status_match:
+            status = status_match.group(1).strip()
+        elif line.strip():
+            feedback_lines.append(line)
+
+    return {
+        'name': name,
+        'status': status,
+        'feedback': '\n'.join(feedback_lines).strip(),
+    }
+
+
+def mark_review_applied(post_card_content: str, round_name: str) -> str:
+    """Change a review round's status from Ready to Applied."""
+    lines = post_card_content.split('\n')
+    result = []
+    in_target_round = False
+
+    for line in lines:
+        if re.match(rf'^## {re.escape(round_name)}\s*$', line):
+            in_target_round = True
+            result.append(line)
+        elif re.match(r'^## ', line) or re.match(r'^# ', line):
+            in_target_round = False
+            result.append(line)
+        elif in_target_round and re.match(r'^Status:\s*Ready\s*$', line, re.IGNORECASE):
+            result.append('Status: Applied')
+        else:
+            result.append(line)
+
+    return '\n'.join(result)
+
+
 def _parse_section_content(section_name: str, content: str):
     """Parse section content based on section type."""
     content = content.strip()

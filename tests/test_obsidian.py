@@ -1,5 +1,8 @@
 import pytest
-from obsidian import read_post_card, extract_wikilinks, update_post_card_section
+from obsidian import (
+    read_post_card, extract_wikilinks, update_post_card_section,
+    parse_reviews, mark_review_applied,
+)
 
 
 SAMPLE_POST_CARD = """# Agent
@@ -18,6 +21,26 @@ style: casual
 # Post
 
 # Reviews
+"""
+
+SAMPLE_CARD_WITH_REVIEWS = """# Agent
+Write about AI.
+
+# Relevant notes
+
+# Relevant links
+
+# Post
+[[My Post]]
+# Reviews
+## Round 1
+Status: Ready
+- The intro is too generic
+- Add a personal anecdote
+
+## Round 2
+Status: Applied
+- Fixed the conclusion
 """
 
 
@@ -83,3 +106,56 @@ class TestUpdatePostCardSection:
         assert 'Old content' not in result
         assert 'New content' in result
         assert '# Reviews' in result
+
+
+class TestParseReviews:
+    def test_parses_rounds(self):
+        reviews = parse_reviews(SAMPLE_CARD_WITH_REVIEWS)
+        assert len(reviews) == 2
+
+    def test_round_names(self):
+        reviews = parse_reviews(SAMPLE_CARD_WITH_REVIEWS)
+        assert reviews[0]['name'] == 'Round 1'
+        assert reviews[1]['name'] == 'Round 2'
+
+    def test_round_statuses(self):
+        reviews = parse_reviews(SAMPLE_CARD_WITH_REVIEWS)
+        assert reviews[0]['status'] == 'Ready'
+        assert reviews[1]['status'] == 'Applied'
+
+    def test_round_feedback(self):
+        reviews = parse_reviews(SAMPLE_CARD_WITH_REVIEWS)
+        assert '- The intro is too generic' in reviews[0]['feedback']
+        assert '- Add a personal anecdote' in reviews[0]['feedback']
+
+    def test_no_reviews(self):
+        assert parse_reviews(SAMPLE_POST_CARD) == []
+
+    def test_no_reviews_section(self):
+        assert parse_reviews('# Agent\nSomething\n') == []
+
+
+class TestMarkReviewApplied:
+    def test_marks_ready_as_applied(self):
+        result = mark_review_applied(SAMPLE_CARD_WITH_REVIEWS, 'Round 1')
+        reviews = parse_reviews(result)
+        assert reviews[0]['status'] == 'Applied'
+
+    def test_preserves_already_applied(self):
+        result = mark_review_applied(SAMPLE_CARD_WITH_REVIEWS, 'Round 1')
+        reviews = parse_reviews(result)
+        assert reviews[1]['status'] == 'Applied'
+
+    def test_preserves_feedback(self):
+        result = mark_review_applied(SAMPLE_CARD_WITH_REVIEWS, 'Round 1')
+        reviews = parse_reviews(result)
+        assert '- The intro is too generic' in reviews[0]['feedback']
+
+    def test_only_changes_target_round(self):
+        content = SAMPLE_CARD_WITH_REVIEWS.replace(
+            '## Round 2\nStatus: Applied', '## Round 2\nStatus: Ready'
+        )
+        result = mark_review_applied(content, 'Round 1')
+        reviews = parse_reviews(result)
+        assert reviews[0]['status'] == 'Applied'
+        assert reviews[1]['status'] == 'Ready'

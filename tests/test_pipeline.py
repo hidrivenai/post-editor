@@ -128,20 +128,33 @@ class TestGenerateBlogPost:
         assert 'Error' in result
 
 
-class TestProcessItem:
+class TestRevisePost:
+    @patch('subprocess.run')
+    def test_returns_revised_output(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout='# Revised Post\n\nBetter content.', stderr='')
+        result = pipeline.revise_post('# Old Post', '- Fix intro', 'write about AI', '/tmp')
+        assert '# Revised Post' in result
+
+    @patch('subprocess.run')
+    def test_returns_original_on_failure(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess([], 1, stdout='', stderr='fail')
+        result = pipeline.revise_post('# Old Post', '- Fix intro', 'write', '/tmp')
+        assert result == '# Old Post'
+
+
+class TestProcessItemGenerate:
     @patch('pipeline.vault_io')
     @patch('subprocess.run')
-    def test_full_pipeline(self, mock_run, mock_vio):
-        # Setup mocks
+    def test_generates_new_post(self, mock_run, mock_vio):
         mock_vio.resolve_wikilink.return_value = 'cards/My Post.md'
         mock_vio.download_text.side_effect = [
-            # Post card content
+            # Post card content (no post yet)
             '# Agent\nframework: narrative\nstyle: casual\n\n# Relevant notes\n\n# Relevant links\n\n# Post\n\n# Reviews\n',
             # Kanban content
             '## WIP\n- [ ] [[My Post]]\n\n## Review\n\n',
         ]
         mock_vio.sync_for_claude.return_value = Path('/tmp/test_vault')
-
         mock_run.return_value = subprocess.CompletedProcess(
             [], 0, stdout='# Generated Post\n\nContent', stderr='')
 
@@ -150,15 +163,66 @@ class TestProcessItem:
 
         pipeline.process_item('My Post', cfg, vault_index)
 
-        # Verify post was uploaded
         upload_calls = mock_vio.upload_text.call_args_list
         assert len(upload_calls) == 3  # post file + updated card + kanban
-        assert upload_calls[0][0][1] == 'My Post Post.md'  # post filename
-        assert upload_calls[1][0][1] == 'cards/My Post.md'  # updated card
-        assert upload_calls[2][0][1] == 'projects/Post Kanban.md'  # kanban
+        assert upload_calls[0][0][1] == 'My Post Post.md'
+        assert upload_calls[1][0][1] == 'cards/My Post.md'
+        assert upload_calls[2][0][1] == 'projects/Post Kanban.md'
 
     @patch('pipeline.vault_io')
     def test_skips_missing_card(self, mock_vio):
         mock_vio.resolve_wikilink.return_value = None
         pipeline.process_item('Missing', {}, {})
         mock_vio.download_text.assert_not_called()
+
+
+class TestProcessItemReview:
+    @patch('pipeline.vault_io')
+    @patch('subprocess.run')
+    def test_applies_ready_reviews(self, mock_run, mock_vio):
+        card_content = (
+            '# Agent\nWrite about AI.\n\n# Relevant notes\n\n# Relevant links\n\n'
+            '# Post\n[[My Post Post]]\n# Reviews\n## Round 1\nStatus: Ready\n'
+            '- Fix the intro\n- Add examples\n'
+        )
+        mock_vio.resolve_wikilink.side_effect = lambda idx, name: {
+            'My Item': 'cards/My Item.md',
+            'My Post Post': 'My Post Post.md',
+        }.get(name)
+        mock_vio.download_text.side_effect = [
+            card_content,           # post card
+            '# Old Post\nContent',  # current post
+            '## WIP\n- [ ] [[My Item]]\n\n## Review\n\n',  # kanban
+        ]
+        mock_vio.sync_for_claude.return_value = Path('/tmp/test_vault')
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout='# Revised Post\n\nBetter content', stderr='')
+
+        cfg = {'gdrive_remote': 'gdrive:Test'}
+        vault_index = {'My Item': 'cards/My Item.md', 'My Post Post': 'My Post Post.md'}
+
+        pipeline.process_item('My Item', cfg, vault_index)
+
+        upload_calls = mock_vio.upload_text.call_args_list
+        assert len(upload_calls) == 3  # revised post + updated card + kanban
+        # Revised post uploaded
+        assert upload_calls[0][0][1] == 'My Post Post.md'
+        assert '# Revised Post' in upload_calls[0][0][2]
+        # Card updated with Applied status
+        assert 'Applied' in upload_calls[1][0][2]
+        # Kanban updated
+        assert upload_calls[2][0][1] == 'projects/Post Kanban.md'
+
+    @patch('pipeline.vault_io')
+    def test_skips_when_no_ready_reviews(self, mock_vio):
+        card_content = (
+            '# Agent\nWrite.\n\n# Post\n[[My Post]]\n# Reviews\n'
+            '## Round 1\nStatus: Applied\n- Old feedback\n'
+        )
+        mock_vio.resolve_wikilink.return_value = 'cards/Item.md'
+        mock_vio.download_text.return_value = card_content
+
+        pipeline.process_item('Item', {'gdrive_remote': 'g'}, {'Item': 'cards/Item.md'})
+
+        # No uploads — nothing to do
+        mock_vio.upload_text.assert_not_called()

@@ -227,11 +227,54 @@ Return ONLY the blog post content in markdown format. Do not include any preambl
     return output
 
 
+def revise_post(post_content: str, feedback: str, agent_prompt: str,
+                local_vault_dir: str) -> str:
+    """Call claude -p to revise a blog post based on review feedback."""
+    prompt = f"""You have read access to the hidrivenai_obsidian/ folder.
+
+Your task: Revise an existing blog post based on editorial feedback.
+
+ORIGINAL AGENT INSTRUCTIONS (for context on the post's intent):
+{agent_prompt}
+
+CURRENT POST:
+{post_content}
+
+REVIEW FEEDBACK TO APPLY:
+{feedback}
+
+INSTRUCTIONS:
+1. Read the feedback carefully
+2. Apply each feedback point to the post
+3. Preserve the overall structure, voice, and style of the original
+4. Only change what the feedback asks for — don't rewrite parts that aren't mentioned
+5. If feedback points conflict with each other, use your best judgment
+
+OUTPUT FORMAT:
+Return ONLY the revised blog post in markdown format. No preamble or commentary."""
+
+    result = subprocess.run(
+        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
+        capture_output=True, text=True, cwd=local_vault_dir
+    )
+
+    if result.returncode != 0:
+        log.error(f"Post revision failed: {result.stderr}")
+        return post_content  # Return original on failure
+
+    output = result.stdout.strip()
+    if not output:
+        log.warning("Empty output from post revision")
+        return post_content
+
+    return output
+
+
 # ── Orchestration ───────────────────────────────────────────────
 
 
 def process_item(item_wikilink: str, cfg: dict, vault_index: dict) -> None:
-    """Full per-item pipeline: read card → gather context → generate → upload."""
+    """Process a WIP item: generate new post or apply review feedback."""
     tmp_dir = None
     try:
         # 1. Resolve wikilink → download post card
@@ -243,63 +286,155 @@ def process_item(item_wikilink: str, cfg: dict, vault_index: dict) -> None:
         card_content = vault_io.download_text(cfg, rel_path)
         card = obsidian.read_post_card(card_content)
 
-        # 2. Build context: download relevant notes
-        context = {
-            'agent_prompt': card.get('Agent', ''),
-            'notes_content': [],
-            'links': card.get('Relevant links', []),
-        }
+        # Branch: does this card already have a post?
+        if card.get('Post'):
+            _apply_reviews(item_wikilink, rel_path, card, card_content, cfg, vault_index)
+        else:
+            _generate_new_post(item_wikilink, rel_path, card, card_content, cfg, vault_index)
 
-        note_paths = []
-        for note_link in card.get('Relevant notes', []):
-            note_rel = vault_io.resolve_wikilink(vault_index, note_link)
-            if note_rel:
-                note_content = vault_io.download_text(cfg, note_rel)
-                context['notes_content'].append({
-                    'name': note_link,
-                    'content': note_content,
-                })
-                note_paths.append(note_rel)
-            else:
-                log.warning(f"Referenced note not found: {note_link}")
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # 3. Sync vault subset for Claude
+
+def _generate_new_post(item_wikilink: str, rel_path: str, card: dict,
+                       card_content: str, cfg: dict, vault_index: dict) -> None:
+    """Generate a new blog post from scratch."""
+    tmp_dir = None
+    try:
+        context = _build_context(card, cfg, vault_index)
+
+        # Sync vault subset for Claude
         tmp_dir = vault_io.sync_for_claude(
             cfg, vault_index,
             needed_dirs=['writing_frameworks', 'styles'],
-            needed_notes=note_paths,
+            needed_notes=context['_note_paths'],
         )
 
-        # 4. Select framework + style
+        # Select framework + style
         framework = select_framework(card, context, str(tmp_dir))
         log.info(f"Framework: {framework}")
 
         style = select_style(card, context, str(tmp_dir))
         log.info(f"Style: {style}")
 
-        # 5. Generate blog post
+        # Generate blog post
         blog_post_content = generate_blog_post(context, framework, style, str(tmp_dir))
         log.info(f"Generated post: {len(blog_post_content)} chars")
 
-        # 6. Upload post
+        # Upload post
         post_title = f"{item_wikilink} Post"
         vault_io.upload_text(cfg, f"{post_title}.md", blog_post_content)
 
-        # 7. Update post card
+        # Update post card
         updated_card = obsidian.update_post_card_section(
             card_content, 'Post', f"[[{post_title}]]"
         )
         vault_io.upload_text(cfg, rel_path, updated_card)
 
-        # 8. Move item in Kanban
-        kanban_content = vault_io.download_text(cfg, "projects/Post Kanban.md")
-        updated_kanban = kanban.move_item(
-            kanban_content, item_wikilink, 'WIP', 'Review'
-        )
-        vault_io.upload_text(cfg, "projects/Post Kanban.md", updated_kanban)
+        # Move to Review
+        _move_to_review(item_wikilink, cfg)
 
-        log.info(f"Successfully processed: {item_wikilink}")
+        log.info(f"Generated new post for: {item_wikilink}")
 
     finally:
         if tmp_dir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _apply_reviews(item_wikilink: str, rel_path: str, card: dict,
+                   card_content: str, cfg: dict, vault_index: dict) -> None:
+    """Apply Ready review feedback to an existing post."""
+    reviews = obsidian.parse_reviews(card_content)
+    ready_reviews = [r for r in reviews if r['status'].lower() == 'ready']
+
+    if not ready_reviews:
+        log.info(f"No Ready reviews for {item_wikilink}, skipping")
+        return
+
+    log.info(f"Applying {len(ready_reviews)} review(s) for {item_wikilink}")
+
+    tmp_dir = None
+    try:
+        # Get the current post content
+        post_links = obsidian.extract_wikilinks(card['Post'])
+        if not post_links:
+            log.error(f"No post link found in Post section for {item_wikilink}")
+            return
+
+        post_name = post_links[0]
+        post_rel = vault_io.resolve_wikilink(vault_index, post_name)
+        if not post_rel:
+            log.error(f"Post file not found: {post_name}")
+            return
+
+        post_content = vault_io.download_text(cfg, post_rel)
+        agent_prompt = card.get('Agent', '')
+
+        # Sync vault for Claude
+        context = _build_context(card, cfg, vault_index)
+        tmp_dir = vault_io.sync_for_claude(
+            cfg, vault_index,
+            needed_dirs=['writing_frameworks', 'styles'],
+            needed_notes=context['_note_paths'],
+        )
+
+        # Apply each Ready review
+        updated_card_content = card_content
+        for review in ready_reviews:
+            log.info(f"Applying review: {review['name']}")
+            post_content = revise_post(
+                post_content, review['feedback'], agent_prompt, str(tmp_dir)
+            )
+            updated_card_content = obsidian.mark_review_applied(
+                updated_card_content, review['name']
+            )
+
+        # Upload revised post
+        vault_io.upload_text(cfg, post_rel, post_content)
+        log.info(f"Revised post: {len(post_content)} chars")
+
+        # Upload updated post card (reviews marked Applied)
+        vault_io.upload_text(cfg, rel_path, updated_card_content)
+
+        # Move to Review
+        _move_to_review(item_wikilink, cfg)
+
+        log.info(f"Reviews applied for: {item_wikilink}")
+
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _build_context(card: dict, cfg: dict, vault_index: dict) -> dict:
+    """Build context dict from post card: download notes, collect links."""
+    context = {
+        'agent_prompt': card.get('Agent', ''),
+        'notes_content': [],
+        'links': card.get('Relevant links', []),
+        '_note_paths': [],
+    }
+
+    for note_link in card.get('Relevant notes', []):
+        note_rel = vault_io.resolve_wikilink(vault_index, note_link)
+        if note_rel:
+            note_content = vault_io.download_text(cfg, note_rel)
+            context['notes_content'].append({
+                'name': note_link,
+                'content': note_content,
+            })
+            context['_note_paths'].append(note_rel)
+        else:
+            log.warning(f"Referenced note not found: {note_link}")
+
+    return context
+
+
+def _move_to_review(item_wikilink: str, cfg: dict) -> None:
+    """Move a Kanban item from WIP to Review."""
+    kanban_content = vault_io.download_text(cfg, "projects/Post Kanban.md")
+    updated_kanban = kanban.move_item(
+        kanban_content, item_wikilink, 'WIP', 'Review'
+    )
+    vault_io.upload_text(cfg, "projects/Post Kanban.md", updated_kanban)
