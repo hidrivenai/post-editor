@@ -156,10 +156,10 @@ class TestRevisePost:
         assert '# Revised Post' in result
 
     @patch('subprocess.run')
-    def test_returns_original_on_failure(self, mock_run):
+    def test_returns_none_on_failure(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess([], 1, stdout='', stderr='fail')
         result = pipeline.revise_post('# Old Post', '- Fix intro', 'write', '/tmp')
-        assert result == '# Old Post'
+        assert result is None
 
 
 class TestProcessItemGenerate:

@@ -109,7 +109,8 @@ Selected framework: <filename-without-extension>"""
     )
 
     if result.returncode != 0:
-        log.error(f"Framework selection failed: {result.stderr}")
+        log.error(f"Framework selection failed (exit {result.returncode}): "
+                  f"stderr={result.stderr!r} stdout={result.stdout[:500]!r}")
         return "narrative"
 
     output = result.stdout.strip()
@@ -162,7 +163,8 @@ Selected style: <filename-without-extension>"""
     )
 
     if result.returncode != 0:
-        log.error(f"Style selection failed: {result.stderr}")
+        log.error(f"Style selection failed (exit {result.returncode}): "
+                  f"stderr={result.stderr!r} stdout={result.stdout[:500]!r}")
         return "casual"
 
     output = result.stdout.strip()
@@ -230,7 +232,8 @@ Keep notes to 2-3 sentences. Notes are optional."""
     )
 
     if result.returncode != 0:
-        log.error(f"Blog post generation failed: {result.stderr}")
+        log.error(f"Blog post generation failed (exit {result.returncode}): "
+                  f"stderr={result.stderr!r} stdout={result.stdout[:500]!r}")
         return "# Error\n\nFailed to generate blog post."
 
     output = result.stdout.strip()
@@ -277,13 +280,14 @@ Keep notes to 2-3 sentences. Notes are optional."""
     )
 
     if result.returncode != 0:
-        log.error(f"Post revision failed: {result.stderr}")
-        return post_content  # Return original on failure
+        log.error(f"Post revision failed (exit {result.returncode}): "
+                  f"stderr={result.stderr!r} stdout={result.stdout[:500]!r}")
+        return None
 
     output = result.stdout.strip()
     if not output:
         log.warning("Empty output from post revision")
-        return post_content
+        return None
 
     return output
 
@@ -404,11 +408,15 @@ def _apply_reviews(item_wikilink: str, rel_path: str, card: dict,
 
         # Apply each Ready review
         updated_card_content = card_content
+        any_applied = False
         for review in ready_reviews:
             log.info(f"Applying review: {review['name']}")
             raw_output = revise_post(
                 post_content, review['feedback'], agent_prompt, str(tmp_dir)
             )
+            if raw_output is None:
+                log.warning(f"Skipping review '{review['name']}' — revision failed")
+                continue
             post_content, ai_notes = _split_post_and_notes(raw_output)
             updated_card_content = obsidian.mark_review_applied(
                 updated_card_content, review['name']
@@ -419,6 +427,11 @@ def _apply_reviews(item_wikilink: str, rel_path: str, card: dict,
             updated_card_content = obsidian.append_history_entry(
                 updated_card_content, history_entry
             )
+            any_applied = True
+
+        if not any_applied:
+            log.warning(f"No reviews successfully applied for {item_wikilink}")
+            return
 
         # Upload revised post
         vault_io.upload_text(cfg, post_rel, post_content)
