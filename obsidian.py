@@ -20,7 +20,8 @@ def read_post_card(content: str) -> dict:
         'Relevant notes': [],
         'Relevant links': [],
         'Post': '',
-        'Reviews': []
+        'Reviews': [],
+        'History': '',
     }
 
     section_pattern = r'^# (.+)$'
@@ -178,6 +179,17 @@ def mark_review_applied(post_card_content: str, round_name: str) -> str:
             result.append(line)
 
     return '\n'.join(result)
+
+
+def append_history_entry(post_card_content: str, entry: str) -> str:
+    """Append a timestamped entry to the History section."""
+    card = read_post_card(post_card_content)
+    current = card.get('History', '')
+    if current:
+        new_history = current + '\n\n' + entry
+    else:
+        new_history = entry
+    return update_post_card_section(post_card_content, 'History', new_history)
 
 
 def _parse_section_content(section_name: str, content: str):

@@ -40,6 +40,25 @@ class TestExtractStyleFromPrompt:
         assert pipeline.extract_style_from_prompt('just write something') is None
 
 
+class TestSplitPostAndNotes:
+    def test_no_separator(self):
+        post, notes = pipeline._split_post_and_notes('# My Post\n\nContent')
+        assert post == '# My Post\n\nContent'
+        assert notes == ''
+
+    def test_with_separator(self):
+        output = '# My Post\n\nContent\n---NOTES---\nUsed narrative arc.'
+        post, notes = pipeline._split_post_and_notes(output)
+        assert post == '# My Post\n\nContent'
+        assert notes == 'Used narrative arc.'
+
+    def test_strips_whitespace(self):
+        output = '  # Post  \n\n---NOTES---\n  Some notes  '
+        post, notes = pipeline._split_post_and_notes(output)
+        assert post == '# Post'
+        assert notes == 'Some notes'
+
+
 class TestFormatNotes:
     def test_formats_notes(self):
         notes = [{'name': 'Note A', 'content': 'Content A'}]
@@ -168,6 +187,11 @@ class TestProcessItemGenerate:
         assert upload_calls[0][0][1] == 'My Post Post.md'
         assert upload_calls[1][0][1] == 'cards/My Post.md'
         assert upload_calls[2][0][1] == 'projects/Post Kanban.md'
+        # Card includes History entry
+        card_content = upload_calls[1][0][2]
+        assert '# History' in card_content
+        assert 'Generated' in card_content
+        assert 'Framework: narrative' in card_content
 
     @patch('pipeline.vault_io')
     def test_skips_missing_card(self, mock_vio):
@@ -208,8 +232,11 @@ class TestProcessItemReview:
         # Revised post uploaded
         assert upload_calls[0][0][1] == 'My Post Post.md'
         assert '# Revised Post' in upload_calls[0][0][2]
-        # Card updated with Applied status
-        assert 'Applied' in upload_calls[1][0][2]
+        # Card updated with Applied status + History
+        card_content = upload_calls[1][0][2]
+        assert 'Applied' in card_content
+        assert '# History' in card_content
+        assert 'Review applied: Round 1' in card_content
         # Kanban updated
         assert upload_calls[2][0][1] == 'projects/Post Kanban.md'
 

@@ -1,7 +1,7 @@
 import pytest
 from obsidian import (
     read_post_card, extract_wikilinks, update_post_card_section,
-    parse_reviews, mark_review_applied,
+    parse_reviews, mark_review_applied, append_history_entry,
 )
 
 
@@ -159,3 +159,36 @@ class TestMarkReviewApplied:
         reviews = parse_reviews(result)
         assert reviews[0]['status'] == 'Applied'
         assert reviews[1]['status'] == 'Ready'
+
+
+class TestReadPostCardHistory:
+    def test_empty_history(self):
+        card = read_post_card(SAMPLE_POST_CARD)
+        assert card['History'] == ''
+
+    def test_parses_history(self):
+        content = SAMPLE_POST_CARD + "\n# History\n## 2026-03-11 Generated\nFramework: narrative\n"
+        card = read_post_card(content)
+        assert '2026-03-11 Generated' in card['History']
+        assert 'Framework: narrative' in card['History']
+
+
+class TestAppendHistoryEntry:
+    def test_adds_history_to_card_without_section(self):
+        result = append_history_entry(SAMPLE_POST_CARD, '## 2026-03-11 Generated\nFramework: narrative')
+        assert '# History' in result
+        assert '2026-03-11 Generated' in result
+        assert 'Framework: narrative' in result
+
+    def test_appends_to_existing_history(self):
+        content = SAMPLE_POST_CARD + "\n# History\n## 2026-03-10 Generated\nOld entry\n"
+        result = append_history_entry(content, '## 2026-03-11 Review applied: Round 1')
+        card = read_post_card(result)
+        assert 'Old entry' in card['History']
+        assert 'Review applied: Round 1' in card['History']
+
+    def test_preserves_other_sections(self):
+        result = append_history_entry(SAMPLE_POST_CARD, '## 2026-03-11 Generated')
+        card = read_post_card(result)
+        assert 'Write a blog post' in card['Agent']
+        assert card['Relevant notes'] == ['Note About Agents', 'AI Research Summary']

@@ -4,6 +4,7 @@ import logging
 import re
 import shutil
 import subprocess
+from datetime import date
 
 import kanban
 import obsidian
@@ -54,6 +55,15 @@ def format_links(links: list[str]) -> str:
     if not links:
         return "(No relevant links)"
     return '\n'.join(f"- {link}" for link in links)
+
+
+def _split_post_and_notes(output: str) -> tuple[str, str]:
+    """Split LLM output into post content and optional AI notes."""
+    separator = '---NOTES---'
+    if separator in output:
+        post, notes = output.split(separator, 1)
+        return post.strip(), notes.strip()
+    return output.strip(), ''
 
 
 # ── Claude CLI integration ──────────────────────────────────────
@@ -208,7 +218,11 @@ INSTRUCTIONS:
    - Consistent with both the framework and style guidelines
 
 OUTPUT FORMAT:
-Return ONLY the blog post content in markdown format. Do not include any preamble or meta-commentary."""
+Return ONLY the blog post content in markdown format. No preamble like "Here's the blog post:" — start directly with the post content.
+
+If you have brief notes about your creative choices (e.g., how you interpreted the framework, key style decisions), place them AFTER the blog post separated by a line containing only:
+---NOTES---
+Keep notes to 2-3 sentences. Notes are optional."""
 
     result = subprocess.run(
         ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
@@ -251,7 +265,11 @@ INSTRUCTIONS:
 5. If feedback points conflict with each other, use your best judgment
 
 OUTPUT FORMAT:
-Return ONLY the revised blog post in markdown format. No preamble or commentary."""
+Return ONLY the revised blog post in markdown format. No preamble — start directly with the post content.
+
+If you have brief notes about what you changed and why, place them AFTER the post separated by a line containing only:
+---NOTES---
+Keep notes to 2-3 sentences. Notes are optional."""
 
     result = subprocess.run(
         ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
@@ -319,17 +337,22 @@ def _generate_new_post(item_wikilink: str, rel_path: str, card: dict,
         log.info(f"Style: {style}")
 
         # Generate blog post
-        blog_post_content = generate_blog_post(context, framework, style, str(tmp_dir))
+        raw_output = generate_blog_post(context, framework, style, str(tmp_dir))
+        blog_post_content, ai_notes = _split_post_and_notes(raw_output)
         log.info(f"Generated post: {len(blog_post_content)} chars")
 
         # Upload post
         post_title = f"{item_wikilink} Post"
         vault_io.upload_text(cfg, f"{post_title}.md", blog_post_content)
 
-        # Update post card
+        # Update post card with post link + history
         updated_card = obsidian.update_post_card_section(
             card_content, 'Post', f"[[{post_title}]]"
         )
+        history_entry = f"## {date.today().isoformat()} Generated\nFramework: {framework} | Style: {style}"
+        if ai_notes:
+            history_entry += f"\n{ai_notes}"
+        updated_card = obsidian.append_history_entry(updated_card, history_entry)
         vault_io.upload_text(cfg, rel_path, updated_card)
 
         # Move to Review
@@ -383,11 +406,18 @@ def _apply_reviews(item_wikilink: str, rel_path: str, card: dict,
         updated_card_content = card_content
         for review in ready_reviews:
             log.info(f"Applying review: {review['name']}")
-            post_content = revise_post(
+            raw_output = revise_post(
                 post_content, review['feedback'], agent_prompt, str(tmp_dir)
             )
+            post_content, ai_notes = _split_post_and_notes(raw_output)
             updated_card_content = obsidian.mark_review_applied(
                 updated_card_content, review['name']
+            )
+            history_entry = f"## {date.today().isoformat()} Review applied: {review['name']}"
+            if ai_notes:
+                history_entry += f"\n{ai_notes}"
+            updated_card_content = obsidian.append_history_entry(
+                updated_card_content, history_entry
             )
 
         # Upload revised post
