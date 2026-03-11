@@ -62,8 +62,22 @@ def _split_post_and_notes(output: str) -> tuple[str, str]:
     separator = '---NOTES---'
     if separator in output:
         post, notes = output.split(separator, 1)
-        return post.strip(), notes.strip()
-    return output.strip(), ''
+        return _clean_post_output(post.strip()), notes.strip()
+    return _clean_post_output(output.strip()), ''
+
+
+def _clean_post_output(text: str) -> str:
+    """Strip any preamble before the first markdown heading.
+
+    Claude sometimes prepends commentary like 'Here's the blog post:' or
+    'I cannot access the web...' before the actual post content.
+    """
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if line.startswith('# '):
+            return '\n'.join(lines[i:]).strip()
+    # No heading found — return as-is
+    return text
 
 
 # ── Claude CLI integration ──────────────────────────────────────
@@ -106,7 +120,8 @@ RESPONSE FORMAT:
 Selected framework: <filename-without-extension>"""
 
     result = subprocess.run(
-        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
+        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian',
+         '--allowedTools', 'WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
         capture_output=True, text=True, cwd=local_vault_dir
     )
 
@@ -162,7 +177,8 @@ RESPONSE FORMAT:
 Selected style: <filename-without-extension>"""
 
     result = subprocess.run(
-        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
+        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian',
+         '--allowedTools', 'WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
         capture_output=True, text=True, cwd=local_vault_dir
     )
 
@@ -233,7 +249,8 @@ If you have brief notes about your creative choices (e.g., how you interpreted t
 Keep notes to 2-3 sentences. Notes are optional."""
 
     result = subprocess.run(
-        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
+        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian',
+         '--allowedTools', 'WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
         capture_output=True, text=True, cwd=local_vault_dir
     )
 
@@ -284,7 +301,8 @@ If you have brief notes about what you changed and why, place them AFTER the pos
 Keep notes to 2-3 sentences. Notes are optional."""
 
     result = subprocess.run(
-        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian'],
+        ['claude', '-p', prompt, '--add-dir', 'hidrivenai_obsidian',
+         '--allowedTools', 'WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
         capture_output=True, text=True, cwd=local_vault_dir
     )
 

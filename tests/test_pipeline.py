@@ -40,6 +40,24 @@ class TestExtractStyleFromPrompt:
         assert pipeline.extract_style_from_prompt('just write something') is None
 
 
+class TestCleanPostOutput:
+    def test_strips_preamble(self):
+        text = "Here's the blog post:\n\n# My Post\n\nContent"
+        assert pipeline._clean_post_output(text) == "# My Post\n\nContent"
+
+    def test_strips_multiline_preamble(self):
+        text = "I cannot access the web.\nI'll work from what I know.\n\n# My Post\n\nContent"
+        assert pipeline._clean_post_output(text) == "# My Post\n\nContent"
+
+    def test_no_preamble(self):
+        text = "# My Post\n\nContent"
+        assert pipeline._clean_post_output(text) == "# My Post\n\nContent"
+
+    def test_no_heading(self):
+        text = "Just some text without headings"
+        assert pipeline._clean_post_output(text) == "Just some text without headings"
+
+
 class TestSplitPostAndNotes:
     def test_no_separator(self):
         post, notes = pipeline._split_post_and_notes('# My Post\n\nContent')
@@ -57,6 +75,12 @@ class TestSplitPostAndNotes:
         post, notes = pipeline._split_post_and_notes(output)
         assert post == '# Post'
         assert notes == 'Some notes'
+
+    def test_strips_preamble_with_notes(self):
+        output = "Here's the post:\n\n# Title\n\nBody\n---NOTES---\nNotes here"
+        post, notes = pipeline._split_post_and_notes(output)
+        assert post == '# Title\n\nBody'
+        assert notes == 'Notes here'
 
 
 class TestFormatNotes:
