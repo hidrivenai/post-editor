@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Interactive setup: authenticates Claude CLI (OAuth) and Google Drive (rclone),
-then writes all credentials to a .env file for local use or Coolify deployment.
+Interactive setup for post-editor credentials.
 
 Usage:
-    python setup_env.py
+    python setup_env.py          # Set up everything
+    python setup_env.py --claude  # Set up Claude auth only
+    python setup_env.py --gdrive  # Set up Google Drive only
+    python setup_env.py --config  # Set up poll interval and GDrive path only
 """
 
+import argparse
 import json
 import os
 import re
@@ -15,7 +18,7 @@ import sys
 from pathlib import Path
 
 
-CLAUDE_CREDENTIALS_PATH = Path.home() / '.claude' / '.credentials.json'
+ENV_PATH = '.env'
 
 
 def banner(title):
@@ -36,7 +39,40 @@ def check_dependency(cmd, name, install_hint):
         print(f"ERROR: {name} is not installed.")
         print(f"Install: {install_hint}")
         sys.exit(1)
-    print(f"{name} found")
+    print(f"  {name} found")
+
+
+def read_env() -> dict:
+    """Read existing .env file into a dict, preserving values."""
+    env = {}
+    if not os.path.exists(ENV_PATH):
+        return env
+    with open(ENV_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' in line:
+                key, _, value = line.partition('=')
+                key = key.strip()
+                value = value.strip()
+                # Strip surrounding quotes
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                env[key] = value
+    return env
+
+
+def write_env(values: dict):
+    """Write dict to .env file. Merges with existing values."""
+    existing = read_env()
+    existing.update(values)
+    lines = []
+    for key, value in existing.items():
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        lines.append(f'{key}="{escaped}"')
+    with open(ENV_PATH, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
 
 
 def authorize_and_get_token(rclone_type):
@@ -64,20 +100,6 @@ def authorize_and_get_token(rclone_type):
     return None
 
 
-def get_claude_credentials():
-    """Read Claude OAuth credentials from ~/.claude/.credentials.json."""
-    if not CLAUDE_CREDENTIALS_PATH.exists():
-        return None
-    try:
-        data = json.loads(CLAUDE_CREDENTIALS_PATH.read_text())
-        oauth = data.get('claudeAiOauth', {})
-        if oauth.get('accessToken') and oauth.get('refreshToken'):
-            return json.dumps(data)
-    except (json.JSONDecodeError, KeyError):
-        pass
-    return None
-
-
 def verify_remote(remote, env_vars):
     merged = {**os.environ, **env_vars}
     result = subprocess.run(
@@ -87,76 +109,80 @@ def verify_remote(remote, env_vars):
     return result.returncode == 0
 
 
-def write_env(values: dict, path: str = '.env'):
-    lines = []
-    for key, value in values.items():
-        escaped = value.replace('"', '\\"')
-        lines.append(f'{key}="{escaped}"')
-    with open(path, 'w') as f:
-        f.write('\n'.join(lines) + '\n')
+# ── Setup sections ───────────────────────────────────────────────
 
 
-def main():
-    print("Post Editor — Setup")
+def setup_claude():
+    """Set up Claude authentication (API key or OAuth token)."""
+    banner("Claude authentication")
+
+    print("Choose authentication method:\n")
+    print("  1. API key  — from console.anthropic.com (recommended for servers)")
+    print("  2. OAuth    — via 'claude setup-token' (uses Max/Pro plan credits)")
     print()
-    print("This script will:")
-    print("  1. Authenticate Claude CLI via OAuth (Max/Pro plan)")
-    print("  2. Authenticate Google Drive via rclone")
-    print("  3. Write everything to .env")
+    choice = ask("Method (1 or 2)", default="1")
 
-    # ── Dependencies
-    banner("Checking dependencies")
-    check_dependency('claude', 'Claude CLI', 'npm install -g @anthropic-ai/claude-code')
-    check_dependency('rclone', 'rclone', 'https://rclone.org/install/')
+    env = {}
 
-    # ── Step 1: Claude CLI OAuth
-    banner("Step 1 of 2 — Claude CLI authentication")
+    if choice == "2":
+        check_dependency('claude', 'Claude CLI', 'npm install -g @anthropic-ai/claude-code')
+        print("\nThis will generate a long-lived OAuth token for headless use.")
+        print("Follow the instructions from the Claude CLI.\n")
 
-    creds = get_claude_credentials()
-    if creds:
-        print("Existing Claude credentials found.")
-        result = subprocess.run(
-            ['claude', 'auth', 'status'],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            try:
-                status = json.loads(result.stdout)
-                print(f"  Logged in as: {status.get('email', 'unknown')}")
-                print(f"  Plan: {status.get('subscriptionType', 'unknown')}")
-            except json.JSONDecodeError:
-                print(f"  Status: {result.stdout.strip()}")
-
-        reuse = ask("Use existing credentials? (y/n)", default="y")
-        if reuse.lower() != 'y':
-            creds = None
-
-    if not creds:
-        print("Opening browser for Claude OAuth login...")
-        print("Sign in with your Anthropic account (Max/Pro plan required).")
-        input("\nPress Enter to open the browser...")
-
-        result = subprocess.run(['claude', 'auth', 'login'])
+        result = subprocess.run(['claude', 'setup-token'], text=True)
         if result.returncode != 0:
-            print("ERROR: Claude login failed.")
+            print("ERROR: claude setup-token failed.")
             sys.exit(1)
 
-        creds = get_claude_credentials()
-        if not creds:
-            print("ERROR: Could not read Claude credentials after login.")
-            print(f"Expected at: {CLAUDE_CREDENTIALS_PATH}")
+        # Read the credentials file that setup-token wrote
+        creds_path = Path.home() / '.claude' / '.credentials.json'
+        if not creds_path.exists():
+            print(f"ERROR: Credentials file not found at {creds_path}")
             sys.exit(1)
 
-    print("Claude credentials captured")
+        try:
+            data = json.loads(creds_path.read_text())
+            env['CLAUDE_CREDENTIALS_JSON'] = json.dumps(data)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"ERROR: Could not read credentials: {e}")
+            sys.exit(1)
 
-    # ── Step 2: Google Drive
-    banner("Step 2 of 2 — Google Drive authentication")
+        # Remove API key if switching to OAuth
+        existing = read_env()
+        if 'ANTHROPIC_API_KEY' in existing:
+            env['ANTHROPIC_API_KEY'] = ''
+            print("(Cleared existing ANTHROPIC_API_KEY)")
+
+        print("Claude OAuth token captured")
+
+    else:
+        api_key = ask("Anthropic API key (sk-ant-...)")
+        if not api_key:
+            print("ERROR: API key is required.")
+            sys.exit(1)
+        env['ANTHROPIC_API_KEY'] = api_key
+
+        # Remove OAuth creds if switching to API key
+        existing = read_env()
+        if 'CLAUDE_CREDENTIALS_JSON' in existing:
+            env['CLAUDE_CREDENTIALS_JSON'] = ''
+            print("(Cleared existing CLAUDE_CREDENTIALS_JSON)")
+
+        print("API key saved")
+
+    write_env(env)
+    print(f"Updated {ENV_PATH}")
+
+
+def setup_gdrive():
+    """Set up Google Drive authentication via rclone."""
+    banner("Google Drive authentication")
+    check_dependency('rclone', 'rclone', 'https://rclone.org/install/')
 
     gdrive_folder = ask(
         "Google Drive folder path",
-        default="HIdrivenAI/hidrivenai_obsidian",
+        default=read_env().get('GDRIVE_REMOTE', '').replace('gdrive:', '') or "HIdrivenAI/hidrivenai_obsidian",
     )
-    poll_interval = ask("Poll interval in seconds", default="300")
 
     print("\nYour browser will open to authenticate with Google.")
     print("Sign in and authorize rclone when prompted.")
@@ -167,48 +193,100 @@ def main():
         print("ERROR: Could not capture Google Drive token from rclone output.")
         print("Try running 'rclone authorize drive' manually and copy the token.")
         sys.exit(1)
-    print("Google Drive token captured")
-
-    # ── Build .env
-    banner("Writing .env")
 
     env = {
-        'CLAUDE_CREDENTIALS_JSON': creds,
         'GDRIVE_REMOTE': f'gdrive:{gdrive_folder}',
-        'POLL_INTERVAL_SECONDS': poll_interval,
         'RCLONE_CONFIG_GDRIVE_TYPE': 'drive',
         'RCLONE_CONFIG_GDRIVE_SCOPE': 'drive',
         'RCLONE_CONFIG_GDRIVE_TOKEN': gd_token,
     }
 
     write_env(env)
-    print(".env written")
+    print("Google Drive token captured")
 
-    # ── Verify GDrive
-    banner("Verifying connections")
-    rclone_env = {
-        'RCLONE_CONFIG_GDRIVE_TYPE': 'drive',
-        'RCLONE_CONFIG_GDRIVE_SCOPE': 'drive',
-        'RCLONE_CONFIG_GDRIVE_TOKEN': gd_token,
-    }
-    remote = f'gdrive:{gdrive_folder}'
+    # Verify
+    rclone_env = {k: v for k, v in env.items() if k.startswith('RCLONE_')}
+    remote = env['GDRIVE_REMOTE']
     if verify_remote(remote, rclone_env):
-        print(f"Google Drive — connected to {remote}")
+        print(f"Verified — connected to {remote}")
     else:
-        print(f"Google Drive — could not list {remote} (folder may not exist yet)")
+        print(f"Warning — could not list {remote} (folder may not exist yet)")
 
-    # ── Next steps
+    print(f"Updated {ENV_PATH}")
+
+
+def setup_config():
+    """Set up non-secret configuration (poll interval, GDrive path)."""
+    banner("Configuration")
+
+    existing = read_env()
+
+    gdrive_folder = ask(
+        "Google Drive folder path",
+        default=existing.get('GDRIVE_REMOTE', '').replace('gdrive:', '') or "HIdrivenAI/hidrivenai_obsidian",
+    )
+    poll_interval = ask(
+        "Poll interval in seconds",
+        default=existing.get('POLL_INTERVAL_SECONDS', '300'),
+    )
+
+    env = {
+        'GDRIVE_REMOTE': f'gdrive:{gdrive_folder}',
+        'POLL_INTERVAL_SECONDS': poll_interval,
+    }
+
+    write_env(env)
+    print(f"Updated {ENV_PATH}")
+
+
+def setup_all():
+    """Full setup — Claude + GDrive + config."""
+    print("Post Editor — Full Setup")
+    print()
+    print("This will set up:")
+    print("  1. Claude authentication (API key or OAuth)")
+    print("  2. Google Drive authentication (rclone)")
+    print("  3. Configuration (poll interval)")
+
+    setup_claude()
+    setup_gdrive()
+
+    # Poll interval
+    existing = read_env()
+    poll_interval = ask(
+        "Poll interval in seconds",
+        default=existing.get('POLL_INTERVAL_SECONDS', '300'),
+    )
+    write_env({'POLL_INTERVAL_SECONDS': poll_interval})
+
     print()
     print("All done! Next steps:")
     print()
-    print("  Run locally:")
-    print("    python main.py")
+    print("  Run locally:    python main.py")
+    print("  Deploy:         Copy .env values into Coolify environment variables")
     print()
-    print("  Deploy to Coolify:")
-    print("    Copy each line from .env into Coolify > Environment Variables.")
-    print("    CLAUDE_CREDENTIALS_JSON and RCLONE_CONFIG_* vars replace local config files.")
-    print()
-    print("  .env contains OAuth tokens — keep it secret, never commit it.")
+    print("  .env contains secrets — never commit it.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Set up post-editor credentials and configuration.",
+        epilog="Run without flags for full setup.",
+    )
+    parser.add_argument('--claude', action='store_true', help='Set up Claude authentication only')
+    parser.add_argument('--gdrive', action='store_true', help='Set up Google Drive authentication only')
+    parser.add_argument('--config', action='store_true', help='Set up poll interval and GDrive path only')
+    args = parser.parse_args()
+
+    if not any([args.claude, args.gdrive, args.config]):
+        setup_all()
+    else:
+        if args.claude:
+            setup_claude()
+        if args.gdrive:
+            setup_gdrive()
+        if args.config:
+            setup_config()
 
 
 if __name__ == '__main__':

@@ -13,20 +13,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 
-def setup_claude_credentials() -> None:
-    """Write Claude OAuth credentials from env var to ~/.claude/.credentials.json.
+def setup_claude_auth() -> None:
+    """Ensure Claude CLI is authenticated.
 
-    Needed for Docker/Coolify where the credentials file doesn't exist.
-    Skipped if the file already exists (local dev) or env var is not set.
+    Priority:
+    1. ANTHROPIC_API_KEY env var — Claude CLI uses this automatically, nothing to do.
+    2. CLAUDE_CREDENTIALS_JSON env var — write to ~/.claude/.credentials.json for OAuth.
+    3. Existing credentials file — local dev, nothing to do.
     """
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        log.info("Using ANTHROPIC_API_KEY for Claude authentication")
+        return
+
     creds_path = Path.home() / '.claude' / '.credentials.json'
     if creds_path.exists():
+        log.info("Using existing Claude credentials file")
         return
 
     creds_json = os.environ.get('CLAUDE_CREDENTIALS_JSON', '')
     if not creds_json:
-        log.warning("No CLAUDE_CREDENTIALS_JSON env var and no credentials file. "
-                     "Claude CLI may not be authenticated.")
+        log.warning("No ANTHROPIC_API_KEY, no CLAUDE_CREDENTIALS_JSON, and no credentials file. "
+                     "Claude CLI will not be authenticated.")
         return
 
     # Strip surrounding quotes that Coolify/Docker can add
@@ -48,7 +55,7 @@ def setup_claude_credentials() -> None:
     creds_path.parent.mkdir(parents=True, exist_ok=True)
     creds_path.write_text(creds_json)
     creds_path.chmod(0o600)
-    log.info("Claude credentials written from env var")
+    log.info("Claude OAuth credentials written from env var")
 
 
 def run_once(cfg: dict) -> None:
@@ -72,7 +79,7 @@ def run_once(cfg: dict) -> None:
 
 
 def main() -> None:
-    setup_claude_credentials()
+    setup_claude_auth()
     cfg = load_config()
     log.info(f'Starting. Poll interval: {cfg["poll_interval"]}s')
     while True:
