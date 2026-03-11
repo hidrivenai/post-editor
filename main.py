@@ -14,15 +14,25 @@ log = logging.getLogger(__name__)
 
 
 def setup_claude_auth() -> None:
-    """Ensure Claude CLI is authenticated.
+    """Ensure Claude CLI is authenticated and onboarding is skipped.
 
     Priority:
-    1. ANTHROPIC_API_KEY env var — Claude CLI uses this automatically, nothing to do.
-    2. CLAUDE_CREDENTIALS_JSON env var — write to ~/.claude/.credentials.json for OAuth.
-    3. Existing credentials file — local dev, nothing to do.
+    1. ANTHROPIC_API_KEY env var — Claude CLI uses this automatically.
+    2. CLAUDE_CODE_OAUTH_TOKEN env var — Claude CLI uses this automatically.
+    3. CLAUDE_CREDENTIALS_JSON env var — write to ~/.claude/.credentials.json.
+    4. Existing credentials file — local dev, nothing to do.
+
+    Also ensures ~/.claude.json has hasCompletedOnboarding=true so the CLI
+    doesn't prompt for theme/auth selection in Docker.
     """
+    _ensure_onboarding_complete()
+
     if os.environ.get('ANTHROPIC_API_KEY'):
         log.info("Using ANTHROPIC_API_KEY for Claude authentication")
+        return
+
+    if os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'):
+        log.info("Using CLAUDE_CODE_OAUTH_TOKEN for Claude authentication")
         return
 
     creds_path = Path.home() / '.claude' / '.credentials.json'
@@ -32,7 +42,8 @@ def setup_claude_auth() -> None:
 
     creds_json = os.environ.get('CLAUDE_CREDENTIALS_JSON', '')
     if not creds_json:
-        log.warning("No ANTHROPIC_API_KEY, no CLAUDE_CREDENTIALS_JSON, and no credentials file. "
+        log.warning("No ANTHROPIC_API_KEY, no CLAUDE_CODE_OAUTH_TOKEN, "
+                     "no CLAUDE_CREDENTIALS_JSON, and no credentials file. "
                      "Claude CLI will not be authenticated.")
         return
 
@@ -56,6 +67,28 @@ def setup_claude_auth() -> None:
     creds_path.write_text(creds_json)
     creds_path.chmod(0o600)
     log.info("Claude OAuth credentials written from env var")
+
+
+def _ensure_onboarding_complete() -> None:
+    """Ensure ~/.claude.json has hasCompletedOnboarding=true.
+
+    Without this, the Claude CLI prompts for theme/auth selection
+    even when CLAUDE_CODE_OAUTH_TOKEN is set.
+    """
+    config_path = Path.home() / '.claude.json'
+    config = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except json.JSONDecodeError:
+            config = {}
+
+    if config.get('hasCompletedOnboarding'):
+        return
+
+    config['hasCompletedOnboarding'] = True
+    config_path.write_text(json.dumps(config))
+    log.info("Set hasCompletedOnboarding in ~/.claude.json")
 
 
 def run_once(cfg: dict) -> None:
