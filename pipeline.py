@@ -81,6 +81,8 @@ def select_framework(card: dict, context: dict, local_vault_dir: str) -> str:
 
     prompt = f"""You have read access to the hidrivenai_obsidian/ directory.
 
+IMPORTANT: This is an automated, non-interactive batch task. Do not ask questions or request approval. Output the result directly.
+
 Your task: Select the most appropriate writing framework from the writing_frameworks/ directory.
 
 Agent Instructions:
@@ -136,6 +138,8 @@ def select_style(card: dict, context: dict, local_vault_dir: str) -> str:
 
     prompt = f"""You have read access to the hidrivenai_obsidian/ directory.
 
+IMPORTANT: This is an automated, non-interactive batch task. Do not ask questions or request approval. Output the result directly.
+
 Your task: Select the most appropriate writing style from the styles/ directory.
 
 Agent Instructions:
@@ -182,6 +186,8 @@ def generate_blog_post(context: dict, framework: str, style: str,
                        local_vault_dir: str) -> str:
     """Call claude -p to generate blog post with specified framework and style."""
     prompt = f"""You have read access to the hidrivenai_obsidian/ folder.
+
+IMPORTANT: This is an automated, non-interactive batch task. There is no human to ask questions to. You MUST produce the blog post directly. Do not ask for clarification, do not present options, do not request approval. Make your best judgment and output the result.
 
 Your task: Write a complete, well-structured blog post in markdown format.
 
@@ -249,6 +255,8 @@ def revise_post(post_content: str, feedback: str, agent_prompt: str,
     """Call claude -p to revise a blog post based on review feedback."""
     prompt = f"""You have read access to the hidrivenai_obsidian/ folder.
 
+IMPORTANT: This is an automated, non-interactive batch task. There is no human to ask questions to. You MUST produce the revised post directly. Do not ask for clarification, do not present options, do not request approval. Make your best judgment and output the result.
+
 Your task: Revise an existing blog post based on editorial feedback.
 
 ORIGINAL AGENT INSTRUCTIONS (for context on the post's intent):
@@ -262,13 +270,14 @@ REVIEW FEEDBACK TO APPLY:
 
 INSTRUCTIONS:
 1. Read the feedback carefully
-2. Apply each feedback point to the post
+2. Apply each feedback point to the post as best you can
 3. Preserve the overall structure, voice, and style of the original
 4. Only change what the feedback asks for — don't rewrite parts that aren't mentioned
-5. If feedback points conflict with each other, use your best judgment
+5. If feedback is unclear or you lack information, make your best guess — do NOT ask questions or present options
+6. If feedback points conflict with each other, use your best judgment
 
 OUTPUT FORMAT:
-Return ONLY the revised blog post in markdown format. No preamble — start directly with the post content.
+Return ONLY the revised blog post in markdown format. No preamble, no questions, no options, no commentary — start directly with the post content.
 
 If you have brief notes about what you changed and why, place them AFTER the post separated by a line containing only:
 ---NOTES---
