@@ -241,6 +241,20 @@ INSTRUCTIONS:
    - Engaging and valuable to readers
    - Consistent with both the framework and style guidelines
 
+6. CRITICAL — Avoid AI-slop patterns. Your writing must NOT contain any of these:
+   - Negation reframes: "It's not X, it's Y", "Not just X, but Y", "This isn't about X. It's about Y", "Less about X, more about Y"
+   - Staccato fragment chains: "Simple. Clear. Effective." or "No X. No Y. No Z."
+   - Setup-reversal drama: "We thought X. We were wrong."
+   - Faux-insider hooks: "Here's what nobody tells you", "But here's the truth", "The truth is..."
+   - Abstract uplift: "It's not just innovation — it's transformation", "X is more than a tool; it's a catalyst"
+   - Generic connector chains: "Moreover...", "In addition...", "It is important to note that...", "Overall...", "This highlights the fact that..."
+   - Triple cadence adjectives: "Fast, scalable, reliable."
+   - False profundity through contrast: "All the X. None of the Y."
+   - Phrases: "serves as a powerful reminder", "plays a crucial role in", "sheds light on", "X isn't just changing — it's redefining"
+   - Uniform sentence lengths — vary your rhythm naturally. Mix short and long sentences, but not in a predictable pattern.
+   - Balanced parallel clauses that make every paragraph sound like a TED talk.
+   Write like a knowledgeable human who has something specific to say, not like a language model trying to sound impressive.
+
 OUTPUT FORMAT:
 Return ONLY the blog post content in markdown format. No preamble like "Here's the blog post:" — start directly with the post content.
 
@@ -292,6 +306,16 @@ INSTRUCTIONS:
 4. Only change what the feedback asks for — don't rewrite parts that aren't mentioned
 5. If feedback is unclear or you lack information, make your best guess — do NOT ask questions or present options
 6. If feedback points conflict with each other, use your best judgment
+7. While revising, also fix any AI-slop patterns you notice in the existing text:
+   - Negation reframes ("It's not X, it's Y", "Not just X, but Y", "This isn't about X. It's about Y")
+   - Staccato fragment chains ("Simple. Clear. Effective." / "No X. No Y. No Z.")
+   - Setup-reversal drama ("We thought X. We were wrong.")
+   - Faux-insider hooks ("Here's what nobody tells you", "But here's the truth")
+   - Abstract uplift ("It's not just innovation — it's transformation")
+   - Generic connectors ("Moreover", "In addition", "It is important to note", "Overall")
+   - Phrases like "serves as a powerful reminder", "plays a crucial role", "sheds light on"
+   - Uniform sentence lengths and predictable parallel rhythm
+   Replace these with direct, natural prose. Write like a human with expertise, not a language model.
 
 OUTPUT FORMAT:
 Return ONLY the revised blog post in markdown format. No preamble, no questions, no options, no commentary — start directly with the post content.
